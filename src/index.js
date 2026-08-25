@@ -140,7 +140,7 @@ async function sendNtfy(env, token) {
     tags: ['rocket', 'warning'],
     actions: [
       { action: 'view', label: 'Open Chart', url: token.dexUrl, clear: true },
-      { action: 'clipboard', label: 'Copy CA', text: token.address },
+      { action: 'copy', label: 'Copy CA', text: token.address },
     ],
   };
 
