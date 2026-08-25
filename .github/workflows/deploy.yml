@@ -10,6 +10,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check secret presence
+        run: |
+          if [ -n "${{ secrets.Cloudflare_api_token_Scope }}" ]; then
+            echo "Cloudflare_api_token_Scope: present, length=${#SECRET}"
+          else
+            echo "Cloudflare_api_token_Scope: MISSING or empty"
+          fi
+        env:
+          SECRET: ${{ secrets.Cloudflare_api_token_Scope }}
       - name: Deploy
         uses: cloudflare/wrangler-action@v3
         with:
