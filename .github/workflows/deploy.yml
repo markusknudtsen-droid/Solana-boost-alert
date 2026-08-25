@@ -16,6 +16,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Temporary: report where the ntfy token actually landed. Only lengths
+      # are printed, never values, so nothing sensitive is exposed.
+      - name: Locate ntfy token
+        env:
+          AS_ENV_SECRET: ${{ secrets.NTFY_TOKEN }}
+          AS_VARIABLE: ${{ vars.NTFY_TOKEN }}
+          AS_LOWER: ${{ secrets.ntfy_token }}
+          AS_ALT_NAME: ${{ secrets.NTFY_ACCESS_TOKEN }}
+        run: |
+          report() { if [ -n "$2" ]; then echo "$1: FOUND (length ${#2})"; else echo "$1: empty"; fi; }
+          report "secrets.NTFY_TOKEN       " "$AS_ENV_SECRET"
+          report "vars.NTFY_TOKEN          " "$AS_VARIABLE"
+          report "secrets.ntfy_token       " "$AS_LOWER"
+          report "secrets.NTFY_ACCESS_TOKEN" "$AS_ALT_NAME"
+          echo "environment in use: Scope"
+
       # No ntfy token configured: deploy code only, leaving any secret
       # already set on the Worker untouched.
       - name: Deploy
