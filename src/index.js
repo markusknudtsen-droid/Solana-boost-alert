@@ -37,7 +37,7 @@ export default {
     }
 
     return new Response(
-      'memescopebot is running.\nGET /run to check boosts right now.\nGET /test-ntfy to verify push notifications.',
+      'solana-boost-alerts is running.\nGET /run to check boosts right now.\nGET /test-ntfy to verify push notifications.',
     );
   },
 };
