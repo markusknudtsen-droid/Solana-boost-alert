@@ -67,6 +67,7 @@ async function checkBoosts(env) {
 
   const alerted = [];
   const skipped = [];
+  const failed = [];
 
   for (const candidate of candidates.values()) {
     const kvKey = `alerted:${candidate.address}`;
@@ -78,7 +79,7 @@ async function checkBoosts(env) {
 
     const pair = await fetchBestPair(candidate.address);
 
-    await sendNtfy(env, {
+    const result = await sendNtfy(env, {
       symbol: pair?.baseToken?.symbol || 'UNKNOWN',
       name: pair?.baseToken?.name || pair?.baseToken?.symbol || 'Unknown token',
       boost: candidate.totalAmount,
@@ -88,11 +89,18 @@ async function checkBoosts(env) {
       dexUrl: pair?.url || candidate.url || `https://dexscreener.com/solana/${candidate.address}`,
     });
 
+    // Only suppress future alerts once the push actually went out, otherwise a
+    // failing notification would silence this token for the whole TTL window.
+    if (!result.ok) {
+      failed.push({ address: candidate.address, status: result.status });
+      continue;
+    }
+
     await env.SEEN.put(kvKey, '1', { expirationTtl: ALERT_TTL_SECONDS });
     alerted.push(candidate.address);
   }
 
-  return { checked: candidates.size, alerted, skipped };
+  return { checked: candidates.size, alerted, skipped, failed };
 }
 
 async function fetchBestPair(address) {
@@ -125,11 +133,9 @@ async function sendNtfy(env, token) {
     `Boost: ${token.boost}`,
     `Market Cap: ${fmtUsd(token.marketCap)}`,
     token.priceUsd ? `Price: $${token.priceUsd}` : null,
-    '',
-    'Contract Address:',
-    token.address,
   ]
     .filter(Boolean)
+    .concat(['', 'Contract Address:', token.address])
     .join('\n');
 
   const payload = {
@@ -140,7 +146,7 @@ async function sendNtfy(env, token) {
     tags: ['rocket', 'warning'],
     actions: [
       { action: 'view', label: 'Open Chart', url: token.dexUrl, clear: true },
-      { action: 'copy', label: 'Copy CA', text: token.address },
+      { action: 'copy', label: 'Copy CA', value: token.address },
     ],
   };
 
