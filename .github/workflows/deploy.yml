@@ -9,10 +9,32 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: Scope
+    env:
+      # Hoisted so the steps below can branch on whether it is configured;
+      # the secrets context is not available in a step-level `if`.
+      NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+
+      # No ntfy token configured: deploy code only, leaving any secret
+      # already set on the Worker untouched.
       - name: Deploy
+        if: env.NTFY_TOKEN == ''
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN_SCOPE }}
           wranglerVersion: "4"
+
+      # Token configured: deploy and (re)upload it as an encrypted Cloudflare
+      # secret. Doing it here rather than by hand in the dashboard means it is
+      # reapplied on every deploy and cannot be clobbered by one.
+      - name: Deploy with ntfy token
+        if: env.NTFY_TOKEN != ''
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN_SCOPE }}
+          wranglerVersion: "4"
+          secrets: |
+            NTFY_TOKEN
+        env:
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
