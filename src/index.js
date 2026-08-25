@@ -30,7 +30,11 @@ export default {
         address: 'TestCA1111111111111111111111111111111111',
         dexUrl: 'https://dexscreener.com',
       });
-      return new Response(JSON.stringify({ topic: env.NTFY_TOPIC, ntfy: result }, null, 2), {
+      return new Response(JSON.stringify({
+        topic: env.NTFY_TOPIC,
+        authenticated: Boolean(env.NTFY_TOKEN),
+        ntfy: result,
+      }, null, 2), {
         status: result.ok ? 200 : 502,
         headers: { 'content-type': 'application/json' },
       });
@@ -150,10 +154,19 @@ async function sendNtfy(env, token) {
     ],
   };
 
+  // ntfy.sh applies its daily quota per visitor, and unauthenticated requests
+  // from a Worker are identified by Cloudflare's shared egress IP -- a pool
+  // other tenants can exhaust. An access token bills the quota to the account
+  // instead, so set NTFY_TOKEN to keep delivery independent of that pool.
+  const headers = { 'content-type': 'application/json' };
+  if (env.NTFY_TOKEN) {
+    headers.authorization = `Bearer ${env.NTFY_TOKEN}`;
+  }
+
   try {
     const res = await fetch('https://ntfy.sh', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
     });
     const body = await res.text();
