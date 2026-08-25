@@ -21,7 +21,7 @@ export default {
     }
 
     if (url.pathname === '/test-ntfy') {
-      await sendNtfy(env, {
+      const result = await sendNtfy(env, {
         symbol: 'TEST',
         name: 'Test Token',
         boost: 999,
@@ -30,7 +30,10 @@ export default {
         address: 'TestCA1111111111111111111111111111111111',
         dexUrl: 'https://dexscreener.com',
       });
-      return new Response('Test notification sent. Check your phone.');
+      return new Response(JSON.stringify({ topic: env.NTFY_TOPIC, ntfy: result }, null, 2), {
+        status: result.ok ? 200 : 502,
+        headers: { 'content-type': 'application/json' },
+      });
     }
 
     return new Response(
@@ -141,13 +144,19 @@ async function sendNtfy(env, token) {
     ],
   };
 
-  const res = await fetch('https://ntfy.sh', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-
-  if (!res.ok) {
-    console.error('ntfy publish failed', res.status, await res.text());
+  try {
+    const res = await fetch('https://ntfy.sh', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const body = await res.text();
+    if (!res.ok) {
+      console.error('ntfy publish failed', res.status, body);
+    }
+    return { ok: res.ok, status: res.status, body };
+  } catch (err) {
+    console.error('ntfy publish threw', err);
+    return { ok: false, status: 0, body: String(err) };
   }
 }
