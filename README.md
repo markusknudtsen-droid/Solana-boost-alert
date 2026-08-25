@@ -19,31 +19,53 @@ GitHub Actions (`.github/workflows/deploy.yml`).
 
 ### 2. Let GitHub Actions deploy for you
 
-The workflow needs a Cloudflare API token as a repo secret:
+The workflow needs a Cloudflare API token. It is stored as an **Environment
+secret** named `CLOUDFLARE_API_TOKEN_SCOPE` under the environment `Scope`,
+which is why the job declares `environment: Scope` — an environment secret is
+invisible to a job that doesn't.
 
-1. Go to the Cloudflare dashboard → **My Profile → API Tokens → Create Token**.
-   Use the **"Edit Cloudflare Workers"** template (grants Workers Scripts + KV
-   edit access), scoped to your account.
-2. Copy the generated token.
-3. In this GitHub repo: **Settings → Secrets and variables → Actions → New
-   repository secret**.
-   - Name: `CLOUDFLARE_API_TOKEN`
-   - Value: the token you copied
-4. Push any change to `main` (or re-run the workflow from the **Actions** tab)
-   to trigger a deploy.
+1. Cloudflare dashboard → **My Profile → API Tokens → Create Token**, using the
+   **"Edit Cloudflare Workers"** template (Workers Scripts + KV edit access).
+2. GitHub repo → **Settings → Environments → Scope → Add secret**
+   - Name: `CLOUDFLARE_API_TOKEN_SCOPE`
+3. Push to `main` (or re-run from the **Actions** tab) to deploy.
 
-That's it — no local `wrangler` commands needed. Every future push to `main`
-redeploys automatically.
+Every future push to `main` redeploys automatically — no local `wrangler`
+commands needed.
+
+### 3. Add an ntfy access token (important for reliable delivery)
+
+ntfy.sh enforces its **250 messages/day limit per visitor IP**. Cloudflare
+Workers publish from shared egress IPs, so the anonymous quota can be
+exhausted by unrelated Cloudflare tenants — producing
+`429 daily message quota reached` even when you personally sent nothing.
+
+Authenticating bills the quota to your account instead:
+
+1. Create a free account at [ntfy.sh](https://ntfy.sh/app) → **Account**.
+2. Generate an **access token** (starts with `tk_`).
+3. Store it as a Cloudflare secret (not in `wrangler.toml` — it must not be
+   committed):
+
+   ```bash
+   npx wrangler secret put NTFY_TOKEN
+   ```
+
+   Or via the Cloudflare dashboard: **Workers & Pages → solana-boost-alerts →
+   Settings → Variables and Secrets → Add → Secret**, named `NTFY_TOKEN`.
+
+`/test-ntfy` reports `"authenticated": true` once the token is picked up.
+Without a token the bot still works, but delivery depends on a shared quota.
 
 ## Verify it works
 
 After the first successful deploy (check the **Actions** tab for a green
 run), open in a browser:
 
-- `https://solana-boost-alert.<your-subdomain>.workers.dev/test-ntfy` — sends
+- `https://solana-boost-alerts.markusknudtsen.workers.dev/test-ntfy` — sends
   a synthetic test alert immediately, so you can confirm the phone popup and
   "Copy CA" button work without waiting for a real 50+ boost.
-- `https://solana-boost-alert.<your-subdomain>.workers.dev/run` — manually
+- `https://solana-boost-alerts.markusknudtsen.workers.dev/run` — manually
   runs one check cycle now and returns JSON of what it found/alerted/skipped.
 
 ## Config
