@@ -14,3 +14,4 @@ jobs:
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.Cloudflare_api_token_Scope }}
+          wranglerVersion: "4"

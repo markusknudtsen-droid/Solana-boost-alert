@@ -48,7 +48,7 @@ run), open in a browser:
 
 ## Config
 
-Edit the `vars` block in `wrangler.jsonc`, commit, and push to change:
+Edit the `vars` block in `wrangler.toml`, commit, and push to change:
 
 - `BOOST_THRESHOLD` — minimum total boost to alert on (default `50`)
 - `NTFY_TOPIC` — your ntfy topic name

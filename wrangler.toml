@@ -1,0 +1,17 @@
+name = "solana-boost-alerts"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[triggers]
+crons = ["* * * * *"]
+
+[[kv_namespaces]]
+binding = "SEEN"
+id = "5a85da53bbd241ca839a48b078a42cc1"
+
+[vars]
+BOOST_THRESHOLD = "50"
+NTFY_TOPIC = "sol-boost-bea2d303a1f27eaa"
+
+[observability]
+enabled = true
