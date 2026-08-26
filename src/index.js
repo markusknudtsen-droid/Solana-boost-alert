@@ -3,7 +3,7 @@ const BOOSTS_ENDPOINTS = [
   'https://api.dexscreener.com/token-boosts/top/v1',
 ];
 
-const ALERT_TTL_SECONDS = 60 * 60 * 12; // don't re-alert the same token for 12h
+const TRACK_TTL_SECONDS = 60 * 60 * 24 * 30; // remember each token's boost level for 30 days
 
 export default {
   async scheduled(event, env, ctx) {
@@ -48,7 +48,13 @@ export default {
 
 async function checkBoosts(env) {
   const threshold = Number(env.BOOST_THRESHOLD || 50);
-  const candidates = new Map();
+
+  // DexScreener's boost endpoints are leaderboard snapshots with no
+  // timestamp -- they don't say *when* a token crossed the threshold, only
+  // its current total. Collect every Solana token's current total here
+  // (regardless of level) so it can be compared against its previously
+  // recorded total below.
+  const latest = new Map();
 
   for (const endpoint of BOOSTS_ENDPOINTS) {
     try {
@@ -58,11 +64,13 @@ async function checkBoosts(env) {
       const list = Array.isArray(data) ? data : (data.tokens || []);
       for (const item of list) {
         if (item.chainId !== 'solana') continue;
-        const total = Number(item.totalAmount ?? item.amount ?? 0);
-        if (total < threshold) continue;
         const address = item.tokenAddress;
-        if (!address || candidates.has(address)) continue;
-        candidates.set(address, { address, totalAmount: total, url: item.url });
+        if (!address) continue;
+        const total = Number(item.totalAmount ?? item.amount ?? 0);
+        const existing = latest.get(address);
+        if (!existing || total > existing.totalAmount) {
+          latest.set(address, { address, totalAmount: total, url: item.url });
+        }
       }
     } catch (err) {
       console.error('boost fetch failed', endpoint, err);
@@ -70,14 +78,29 @@ async function checkBoosts(env) {
   }
 
   const alerted = [];
-  const skipped = [];
+  const belowThreshold = [];
+  const alreadyKnownAbove = [];
+  const firstSightBaseline = [];
   const failed = [];
 
-  for (const candidate of candidates.values()) {
-    const kvKey = `alerted:${candidate.address}`;
-    const already = await env.SEEN.get(kvKey);
-    if (already) {
-      skipped.push(candidate.address);
+  for (const candidate of latest.values()) {
+    const kvKey = `lastAmount:${candidate.address}`;
+    const prevRaw = await env.SEEN.get(kvKey);
+    const prev = prevRaw === null ? null : Number(prevRaw);
+    const isFirstSight = prev === null;
+
+    // Only a genuine crossing -- previously below, now at/above -- counts as
+    // a fresh boost. A token first seen already above threshold gets its
+    // level recorded silently: we have no way to know if that happened just
+    // now or hours ago, so (per the "don't alert on stale boosts" requirement)
+    // it is never alerted on its first sighting, only on a later real jump.
+    const justCrossed = !isFirstSight && prev < threshold && candidate.totalAmount >= threshold;
+
+    if (!justCrossed) {
+      if (candidate.totalAmount < threshold) belowThreshold.push(candidate.address);
+      else if (isFirstSight) firstSightBaseline.push(candidate.address);
+      else alreadyKnownAbove.push(candidate.address);
+      await env.SEEN.put(kvKey, String(candidate.totalAmount), { expirationTtl: TRACK_TTL_SECONDS });
       continue;
     }
 
@@ -93,18 +116,19 @@ async function checkBoosts(env) {
       dexUrl: pair?.url || candidate.url || `https://dexscreener.com/solana/${candidate.address}`,
     });
 
-    // Only suppress future alerts once the push actually went out, otherwise a
-    // failing notification would silence this token for the whole TTL window.
+    // Only record the new level once the push actually went out. Leaving the
+    // old (below-threshold) value in place on failure means this crossing is
+    // retried on the next poll instead of being silently swallowed.
     if (!result.ok) {
       failed.push({ address: candidate.address, status: result.status });
       continue;
     }
 
-    await env.SEEN.put(kvKey, '1', { expirationTtl: ALERT_TTL_SECONDS });
+    await env.SEEN.put(kvKey, String(candidate.totalAmount), { expirationTtl: TRACK_TTL_SECONDS });
     alerted.push(candidate.address);
   }
 
-  return { checked: candidates.size, alerted, skipped, failed };
+  return { checked: latest.size, alerted, belowThreshold, alreadyKnownAbove, firstSightBaseline, failed };
 }
 
 async function fetchBestPair(address) {
