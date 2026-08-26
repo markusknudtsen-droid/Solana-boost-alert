@@ -75,11 +75,22 @@ Edit the `vars` block in `wrangler.toml`, commit, and push to change:
 - `BOOST_THRESHOLD` — minimum total boost to alert on (default `50`)
 - `NTFY_TOPIC` — your ntfy topic name
 
-## How it dedupes
+## How it decides what's a "new" boost
 
-Each alerted token address is written to the `SEEN` KV namespace for 12 hours,
-so a token that stays boosted doesn't re-alert every minute. If it drops off
-and gets freshly boosted again after that window, you'll get a new alert.
+DexScreener's boost endpoints are leaderboard snapshots — they report each
+token's *current* total boost, not when it got there. To avoid alerting on
+boosts that happened hours ago (before the bot ever noticed them), the Worker
+tracks each token's last-seen boost total in the `SEEN` KV namespace and only
+alerts on the actual transition from below the threshold to at/above it.
+
+- A token first ever seen already above the threshold is recorded silently
+  as a baseline and **not** alerted — there's no way to know if that boost
+  is brand new or ten hours old.
+- A token that goes from, say, 20 to 75 in one poll **is** alerted — that's
+  a genuine new crossing.
+- A token that stays above the threshold across polls never re-alerts.
+- If a token's boosts expire and it later gets boosted again past the
+  threshold, that's a fresh crossing and alerts again.
 
 ## Note on field names
 
