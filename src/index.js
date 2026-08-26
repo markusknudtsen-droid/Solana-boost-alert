@@ -55,11 +55,15 @@ async function checkBoosts(env) {
   // (regardless of level) so it can be compared against its previously
   // recorded total below.
   const latest = new Map();
+  const endpointErrors = [];
 
   for (const endpoint of BOOSTS_ENDPOINTS) {
     try {
       const res = await fetch(endpoint, { headers: { accept: 'application/json' } });
-      if (!res.ok) continue;
+      if (!res.ok) {
+        endpointErrors.push({ endpoint, status: res.status, body: (await res.text()).slice(0, 300) });
+        continue;
+      }
       const data = await res.json();
       const list = Array.isArray(data) ? data : (data.tokens || []);
       for (const item of list) {
@@ -74,6 +78,7 @@ async function checkBoosts(env) {
       }
     } catch (err) {
       console.error('boost fetch failed', endpoint, err);
+      endpointErrors.push({ endpoint, error: String(err && err.stack ? err.stack : err) });
     }
   }
 
@@ -128,7 +133,7 @@ async function checkBoosts(env) {
     alerted.push(candidate.address);
   }
 
-  return { checked: latest.size, alerted, belowThreshold, alreadyKnownAbove, firstSightBaseline, failed };
+  return { checked: latest.size, alerted, belowThreshold, alreadyKnownAbove, firstSightBaseline, failed, endpointErrors };
 }
 
 async function fetchBestPair(address) {
