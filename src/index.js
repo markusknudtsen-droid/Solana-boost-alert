@@ -1,37 +1,13 @@
-const BOOSTS_ENDPOINTS = [
-  'https://api.dexscreener.com/token-boosts/latest/v1',
-  'https://api.dexscreener.com/token-boosts/top/v1',
-];
-
-const TRACK_TTL_SECONDS = 60 * 60 * 24 * 30; // remember each token's boost level for 30 days
+// Boost checking runs on a schedule via GitHub Actions
+// (.github/workflows/check-boosts.yml + scripts/check-boosts.mjs), not from
+// this Worker. DexScreener's Cloudflare WAF blocks the shared Workers
+// egress IP range with a persistent 429/1015 -- confirmed by getting a
+// clean 200 from a GitHub-hosted runner at the same moment this Worker got
+// blocked. This Worker now only exists to send/verify ntfy pushes.
 
 export default {
-  async scheduled(event, env, ctx) {
-    ctx.waitUntil(
-      checkBoosts(env).catch((err) => console.error('scheduled checkBoosts threw', err)),
-    );
-  },
-
   async fetch(request, env) {
     const url = new URL(request.url);
-
-    if (url.pathname === '/run') {
-      try {
-        const result = await checkBoosts(env);
-        return new Response(JSON.stringify(result, null, 2), {
-          headers: { 'content-type': 'application/json' },
-        });
-      } catch (err) {
-        return new Response(JSON.stringify({
-          error: 'checkBoosts threw',
-          message: String(err && err.message ? err.message : err),
-          stack: err && err.stack ? String(err.stack) : null,
-        }, null, 2), {
-          status: 500,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-    }
 
     if (url.pathname === '/test-ntfy') {
       const result = await sendNtfy(env, {
@@ -54,115 +30,12 @@ export default {
     }
 
     return new Response(
-      'solana-boost-alerts is running.\nGET /run to check boosts right now.\nGET /test-ntfy to verify push notifications.',
+      'solana-boost-alerts: ntfy sender only.\n' +
+      'Boost checking runs via GitHub Actions (check-boosts.yml), not this Worker.\n' +
+      'GET /test-ntfy to verify push notifications.',
     );
   },
 };
-
-async function checkBoosts(env) {
-  const threshold = Number(env.BOOST_THRESHOLD || 50);
-
-  // DexScreener's boost endpoints are leaderboard snapshots with no
-  // timestamp -- they don't say *when* a token crossed the threshold, only
-  // its current total. Collect every Solana token's current total here
-  // (regardless of level) so it can be compared against its previously
-  // recorded total below.
-  const latest = new Map();
-  const endpointErrors = [];
-
-  for (const endpoint of BOOSTS_ENDPOINTS) {
-    try {
-      const res = await fetch(endpoint, { headers: { accept: 'application/json' } });
-      if (!res.ok) {
-        endpointErrors.push({ endpoint, status: res.status, body: (await res.text()).slice(0, 300) });
-        continue;
-      }
-      const data = await res.json();
-      const list = Array.isArray(data) ? data : (data.tokens || []);
-      for (const item of list) {
-        if (item.chainId !== 'solana') continue;
-        const address = item.tokenAddress;
-        if (!address) continue;
-        const total = Number(item.totalAmount ?? item.amount ?? 0);
-        const existing = latest.get(address);
-        if (!existing || total > existing.totalAmount) {
-          latest.set(address, { address, totalAmount: total, url: item.url });
-        }
-      }
-    } catch (err) {
-      console.error('boost fetch failed', endpoint, err);
-      endpointErrors.push({ endpoint, error: String(err && err.stack ? err.stack : err) });
-    }
-  }
-
-  const alerted = [];
-  const belowThreshold = [];
-  const alreadyKnownAbove = [];
-  const firstSightBaseline = [];
-  const failed = [];
-
-  for (const candidate of latest.values()) {
-    const kvKey = `lastAmount:${candidate.address}`;
-    const prevRaw = await env.SEEN.get(kvKey);
-    const prev = prevRaw === null ? null : Number(prevRaw);
-    const isFirstSight = prev === null;
-
-    // Only a genuine crossing -- previously below, now at/above -- counts as
-    // a fresh boost. A token first seen already above threshold gets its
-    // level recorded silently: we have no way to know if that happened just
-    // now or hours ago, so (per the "don't alert on stale boosts" requirement)
-    // it is never alerted on its first sighting, only on a later real jump.
-    const justCrossed = !isFirstSight && prev < threshold && candidate.totalAmount >= threshold;
-
-    if (!justCrossed) {
-      if (candidate.totalAmount < threshold) belowThreshold.push(candidate.address);
-      else if (isFirstSight) firstSightBaseline.push(candidate.address);
-      else alreadyKnownAbove.push(candidate.address);
-      await env.SEEN.put(kvKey, String(candidate.totalAmount), { expirationTtl: TRACK_TTL_SECONDS });
-      continue;
-    }
-
-    const pair = await fetchBestPair(candidate.address);
-
-    const result = await sendNtfy(env, {
-      symbol: pair?.baseToken?.symbol || 'UNKNOWN',
-      name: pair?.baseToken?.name || pair?.baseToken?.symbol || 'Unknown token',
-      boost: candidate.totalAmount,
-      marketCap: pair?.marketCap ?? pair?.fdv ?? null,
-      priceUsd: pair?.priceUsd ?? null,
-      address: candidate.address,
-      dexUrl: pair?.url || candidate.url || `https://dexscreener.com/solana/${candidate.address}`,
-    });
-
-    // Only record the new level once the push actually went out. Leaving the
-    // old (below-threshold) value in place on failure means this crossing is
-    // retried on the next poll instead of being silently swallowed.
-    if (!result.ok) {
-      failed.push({ address: candidate.address, status: result.status });
-      continue;
-    }
-
-    await env.SEEN.put(kvKey, String(candidate.totalAmount), { expirationTtl: TRACK_TTL_SECONDS });
-    alerted.push(candidate.address);
-  }
-
-  return { checked: latest.size, alerted, belowThreshold, alreadyKnownAbove, firstSightBaseline, failed, endpointErrors };
-}
-
-async function fetchBestPair(address) {
-  try {
-    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    const pairs = (data.pairs || []).filter((p) => p.chainId === 'solana');
-    if (!pairs.length) return null;
-    return pairs.reduce((best, p) =>
-      Number(p.liquidity?.usd || 0) > Number(best.liquidity?.usd || 0) ? p : best, pairs[0]);
-  } catch (err) {
-    console.error('pair fetch failed', address, err);
-    return null;
-  }
-}
 
 function fmtUsd(n) {
   const num = Number(n);
@@ -196,10 +69,6 @@ async function sendNtfy(env, token) {
     ],
   };
 
-  // ntfy.sh applies its daily quota per visitor, and unauthenticated requests
-  // from a Worker are identified by Cloudflare's shared egress IP -- a pool
-  // other tenants can exhaust. An access token bills the quota to the account
-  // instead, so set NTFY_TOKEN to keep delivery independent of that pool.
   const headers = { 'content-type': 'application/json' };
   if (env.NTFY_TOKEN) {
     headers.authorization = `Bearer ${env.NTFY_TOKEN}`;

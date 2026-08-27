@@ -1,0 +1,26 @@
+name: Check Solana boosts
+
+on:
+  schedule:
+    # GitHub's minimum interval for scheduled workflows is 5 minutes.
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Scope
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run boost check
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN_SCOPE }}
+          CLOUDFLARE_ACCOUNT_ID: '0bb10278a833daebab009ebb7aad9015'
+          CLOUDFLARE_KV_NAMESPACE_ID: '5a85da53bbd241ca839a48b078a42cc1'
+          NTFY_TOPIC: 'sol-boost-bea2d303a1f27eaa'
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          BOOST_THRESHOLD: '50'
+        run: node scripts/check-boosts.mjs
