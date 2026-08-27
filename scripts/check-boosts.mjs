@@ -5,10 +5,15 @@
 // the same Cloudflare KV namespace the Worker uses, accessed here via the
 // Cloudflare REST API instead of a Workers binding.
 
-const BOOSTS_ENDPOINTS = [
-  'https://api.dexscreener.com/token-boosts/latest/v1',
-  'https://api.dexscreener.com/token-boosts/top/v1',
-];
+// "latest" = tokens that were JUST boosted (a recent-purchase event feed,
+// not ranked by size) -- appearing here is a strong recency signal even
+// with no prior tracking history. "top" is a size-ranked leaderboard that
+// can keep showing a token that was boosted hours ago, so appearing there
+// alone says nothing about *when* it happened.
+const BOOSTS_ENDPOINTS = {
+  latest: 'https://api.dexscreener.com/token-boosts/latest/v1',
+  top: 'https://api.dexscreener.com/token-boosts/top/v1',
+};
 
 const THRESHOLD = Number(process.env.BOOST_THRESHOLD || 50);
 const TRACK_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
@@ -113,7 +118,7 @@ async function checkBoosts() {
   const latest = new Map();
   const endpointErrors = [];
 
-  for (const endpoint of BOOSTS_ENDPOINTS) {
+  for (const [source, endpoint] of Object.entries(BOOSTS_ENDPOINTS)) {
     try {
       const res = await fetch(endpoint, { headers: { accept: 'application/json' } });
       if (!res.ok) {
@@ -128,8 +133,11 @@ async function checkBoosts() {
         if (!address) continue;
         const total = Number(item.totalAmount ?? item.amount ?? 0);
         const existing = latest.get(address);
-        if (!existing || total > existing.totalAmount) {
-          latest.set(address, { address, totalAmount: total, url: item.url });
+        if (!existing) {
+          latest.set(address, { address, totalAmount: total, url: item.url, sources: new Set([source]) });
+        } else {
+          existing.sources.add(source);
+          if (total > existing.totalAmount) existing.totalAmount = total;
         }
       }
     } catch (err) {
@@ -163,7 +171,14 @@ async function checkBoosts() {
     }
 
     const isFirstSight = prev === null;
-    const justCrossed = !isFirstSight && prev < THRESHOLD && candidate.totalAmount >= THRESHOLD;
+
+    // A token first ever seen already above threshold is normally suppressed
+    // -- no way to know if that happened just now or hours ago. Exception:
+    // if it showed up in the "latest boosted" feed specifically (a recent
+    // purchase-event feed, not a size leaderboard), that IS a real signal
+    // the boost is fresh, so treat it as a genuine crossing worth alerting.
+    const freshFirstSight = isFirstSight && candidate.sources.has('latest') && candidate.totalAmount >= THRESHOLD;
+    const justCrossed = freshFirstSight || (!isFirstSight && prev < THRESHOLD && candidate.totalAmount >= THRESHOLD);
 
     if (!justCrossed) {
       if (candidate.totalAmount < THRESHOLD) belowThreshold.push(candidate.address);
