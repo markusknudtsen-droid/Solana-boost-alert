@@ -2,7 +2,9 @@ name: Check Solana boosts
 
 on:
   schedule:
-    # GitHub's minimum interval for scheduled workflows is 5 minutes.
+    # GitHub's minimum interval for scheduled workflows is 5 minutes. New
+    # scheduled workflows can take a while to get their first automatic
+    # tick; re-touching this trigger block is a known nudge for that.
     - cron: '*/5 * * * *'
   workflow_dispatch: {}
 
