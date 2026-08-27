@@ -16,6 +16,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Temporary: check whether DexScreener is reachable from GitHub's
+      # runner IPs, since the Cloudflare Worker is currently getting a
+      # persistent Cloudflare-edge 429/1015 (rate limited) from it.
+      - name: Diagnose DexScreener reachability from this runner
+        run: |
+          curl -sS -m 20 -w "\nHTTP_STATUS=%{http_code}\n" \
+            "https://api.dexscreener.com/token-boosts/latest/v1" | tail -c 500
+
       # Always deploy code first. Cloudflare rejects a secret upload against a
       # Worker whose latest version isn't the one currently deployed ("code:
       # 10215"), which can happen after dashboard edits that create a version
