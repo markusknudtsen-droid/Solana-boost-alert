@@ -7,17 +7,30 @@ const TRACK_TTL_SECONDS = 60 * 60 * 24 * 30; // remember each token's boost leve
 
 export default {
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(checkBoosts(env));
+    ctx.waitUntil(
+      checkBoosts(env).catch((err) => console.error('scheduled checkBoosts threw', err)),
+    );
   },
 
   async fetch(request, env) {
     const url = new URL(request.url);
 
     if (url.pathname === '/run') {
-      const result = await checkBoosts(env);
-      return new Response(JSON.stringify(result, null, 2), {
-        headers: { 'content-type': 'application/json' },
-      });
+      try {
+        const result = await checkBoosts(env);
+        return new Response(JSON.stringify(result, null, 2), {
+          headers: { 'content-type': 'application/json' },
+        });
+      } catch (err) {
+        return new Response(JSON.stringify({
+          error: 'checkBoosts threw',
+          message: String(err && err.message ? err.message : err),
+          stack: err && err.stack ? String(err.stack) : null,
+        }, null, 2), {
+          status: 500,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
     }
 
     if (url.pathname === '/test-ntfy') {
