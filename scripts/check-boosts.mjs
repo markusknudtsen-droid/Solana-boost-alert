@@ -143,13 +143,26 @@ async function checkBoosts() {
   const alreadyKnownAbove = [];
   const firstSightBaseline = [];
   const failed = [];
+  const candidateErrors = [];
 
+  // Every KV call below is individually wrapped so that one token's read or
+  // write failure (e.g. hitting KV's daily write quota) can never abort
+  // processing of the remaining candidates -- a real crossing later in this
+  // same loop must still get checked and alerted even if an earlier token's
+  // bookkeeping failed.
   for (const candidate of latest.values()) {
     const kvKey = `lastAmount:${candidate.address}`;
-    const prevRaw = await kvGet(kvKey);
-    const prev = prevRaw === null ? null : Number(prevRaw);
-    const isFirstSight = prev === null;
 
+    let prev;
+    try {
+      const prevRaw = await kvGet(kvKey);
+      prev = prevRaw === null ? null : Number(prevRaw);
+    } catch (err) {
+      candidateErrors.push({ address: candidate.address, stage: 'kvGet', error: String(err) });
+      continue; // can't safely tell if this is a crossing without prior state
+    }
+
+    const isFirstSight = prev === null;
     const justCrossed = !isFirstSight && prev < THRESHOLD && candidate.totalAmount >= THRESHOLD;
 
     if (!justCrossed) {
@@ -161,7 +174,11 @@ async function checkBoosts() {
       // every poll would blow through that fast with dozens of tokens
       // tracked every 5 minutes, most of which don't move between polls.
       if (isFirstSight || prev !== candidate.totalAmount) {
-        await kvPut(kvKey, String(candidate.totalAmount), TRACK_TTL_SECONDS);
+        try {
+          await kvPut(kvKey, String(candidate.totalAmount), TRACK_TTL_SECONDS);
+        } catch (err) {
+          candidateErrors.push({ address: candidate.address, stage: 'kvPut (baseline)', error: String(err) });
+        }
       }
       continue;
     }
@@ -182,11 +199,28 @@ async function checkBoosts() {
       continue;
     }
 
-    await kvPut(kvKey, String(candidate.totalAmount), TRACK_TTL_SECONDS);
+    // The push already went out -- count it as alerted regardless of what
+    // happens next. Worst case if this write fails: the token alerts again
+    // on a future run once writes work again, which is far better than
+    // losing the alert or blocking every candidate still left in this loop.
     alerted.push(candidate.address);
+    try {
+      await kvPut(kvKey, String(candidate.totalAmount), TRACK_TTL_SECONDS);
+    } catch (err) {
+      candidateErrors.push({ address: candidate.address, stage: 'kvPut (post-alert)', error: String(err) });
+    }
   }
 
-  return { checked: latest.size, alerted, belowThreshold, alreadyKnownAbove, firstSightBaseline, failed, endpointErrors };
+  return {
+    checked: latest.size,
+    alerted,
+    belowThreshold,
+    alreadyKnownAbove,
+    firstSightBaseline,
+    failed,
+    candidateErrors,
+    endpointErrors,
+  };
 }
 
 const result = await checkBoosts();
