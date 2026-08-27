@@ -156,7 +156,13 @@ async function checkBoosts() {
       if (candidate.totalAmount < THRESHOLD) belowThreshold.push(candidate.address);
       else if (isFirstSight) firstSightBaseline.push(candidate.address);
       else alreadyKnownAbove.push(candidate.address);
-      await kvPut(kvKey, String(candidate.totalAmount), TRACK_TTL_SECONDS);
+      // KV's free tier caps writes at 1,000/day account-wide. Only spend one
+      // when the value actually changed -- re-writing an unchanged total on
+      // every poll would blow through that fast with dozens of tokens
+      // tracked every 5 minutes, most of which don't move between polls.
+      if (isFirstSight || prev !== candidate.totalAmount) {
+        await kvPut(kvKey, String(candidate.totalAmount), TRACK_TTL_SECONDS);
+      }
       continue;
     }
 
