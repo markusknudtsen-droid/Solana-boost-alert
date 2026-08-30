@@ -8,23 +8,30 @@ notification's "Copy CA" button to copy it straight to your clipboard).
 ## Architecture
 
 - **`.github/workflows/check-boosts.yml` + `scripts/check-boosts.mjs`** —
-  runs on a GitHub Actions schedule (every 5 minutes, GitHub's minimum
-  interval). This is where the actual boost-checking happens.
+  this is where the actual boost-checking happens, on a GitHub Actions
+  runner.
 - **Cloudflare Workers KV** — stores each token's last-seen boost total, so
   a repeat poll doesn't re-alert on a token that's just sitting above the
   threshold (see "How it decides what's a new boost" below). Accessed by the
   Action directly via the Cloudflare REST API — no Cloudflare Worker
   involved in checking.
-- **The `solana-boost-alerts` Cloudflare Worker** (`src/index.js`) only
-  sends/verifies ntfy pushes now (`/test-ntfy`). It used to also run the
-  1-minute boost check on a Cron Trigger, but **DexScreener's Cloudflare WAF
-  blocks the shared Workers egress IP range** — confirmed by getting a clean
+- **The `solana-boost-alerts` Cloudflare Worker** (`src/index.js`) has two
+  jobs, neither of which is checking boosts — **DexScreener's Cloudflare WAF
+  blocks the shared Workers egress IP range**, confirmed by getting a clean
   200 from a GitHub Actions runner at the exact moment the Worker got a
-  persistent `429` / `error code: 1015` from the same endpoints. That's why
-  checking moved to GitHub Actions and checks run every 5 minutes instead of
-  every 1 minute: it's the fastest interval GitHub's scheduler supports, and
-  in practice a busy queue can delay a run by a few extra minutes on top of
-  that.
+  persistent `429` / `error code: 1015` from the same endpoints:
+  1. Sends/verifies ntfy pushes (`/test-ntfy`).
+  2. Runs a **Cloudflare Cron Trigger every 5 minutes** that pings GitHub's
+     `workflow_dispatch` API to kick off `check-boosts.yml` (`/test-dispatch`
+     to trigger this manually). This exists because GitHub's own `schedule:`
+     cron on that workflow turned out to be unreliable by itself — observed
+     real gaps of **2 to 12 hours** between automatic runs instead of the
+     configured 5 minutes, which is GitHub deprioritizing high-frequency
+     cron on a lower-traffic repo. Cloudflare Cron Triggers run reliably to
+     the minute, and this ping never touches DexScreener, so the Workers-IP
+     block doesn't apply to it. GitHub's own `schedule:` trigger is left in
+     place too as a harmless redundant backup — the check script is safe to
+     run concurrently/repeatedly (see "How it decides what's a new boost").
 
 Every push to `main` still auto-deploys the Worker via
 `.github/workflows/deploy.yml`.
@@ -68,14 +75,37 @@ picked up (it's also uploaded to the Worker as a Cloudflare secret by
 `check-boosts.yml`). Without a token the bot still works, but delivery
 depends on a shared quota.
 
+### 4. GitHub dispatch token (keeps checks actually running every 5 minutes)
+
+The Worker's Cron Trigger needs its own GitHub token to call the
+`workflow_dispatch` API — this is separate from `CLOUDFLARE_API_TOKEN_SCOPE`
+(that one lets GitHub Actions talk to Cloudflare; this one lets the
+Cloudflare Worker talk to GitHub).
+
+1. GitHub → **Settings → Developer settings → Personal access tokens →
+   Fine-grained tokens → Generate new token**.
+2. **Repository access**: only this repository (`Solana-boost-alert`).
+3. **Permissions**: Repository permissions → **Actions** → **Read and
+   write**. Nothing else is needed.
+4. GitHub repo → **Settings → Environments → Scope → Add secret**, named
+   `GH_DISPATCH_TOKEN`.
+
+It's uploaded to the Worker as a Cloudflare secret by `deploy.yml`, same
+pattern as `NTFY_TOKEN`. Without it, `/test-dispatch` returns
+`"GH_DISPATCH_TOKEN not configured"` and the Worker falls back to relying
+solely on GitHub's own (unreliable) `schedule:` trigger.
+
 ## Verify it works
 
 - **Test the push path**: `https://solana-boost-alerts.markusknudtsen.workers.dev/test-ntfy`
   sends a synthetic test alert immediately, so you can confirm the phone
   popup and "Copy CA" button work without waiting for a real 50+ boost.
-- **Test the check path**: GitHub repo → **Actions → Check Solana boosts →
-  Run workflow** runs a check cycle right now; open the run's log for JSON
-  showing what it found/alerted/skipped.
+- **Test the dispatch path**: `https://solana-boost-alerts.markusknudtsen.workers.dev/test-dispatch`
+  fires `check-boosts.yml` on GitHub right now via the same path the Cron
+  Trigger uses every 5 minutes.
+- **Test the check path directly**: GitHub repo → **Actions → Check Solana
+  boosts → Run workflow** runs a check cycle right now; open the run's log
+  for JSON showing what it found/alerted/skipped.
 
 ## Config
 
@@ -90,9 +120,15 @@ boosts that happened hours ago (before a check ever noticed them), each run
 tracks every token's last-seen boost total in Cloudflare KV and only alerts
 on the actual transition from below the threshold to at/above it.
 
-- A token first ever seen already above the threshold is recorded silently
-  as a baseline and **not** alerted — there's no way to know if that boost
-  is brand new or ten hours old.
+- A token first ever seen already above the threshold is normally recorded
+  silently as a baseline and **not** alerted — there's no way to know if
+  that boost is brand new or ten hours old. **Exception:** if it showed up
+  in DexScreener's `token-boosts/latest/v1` feed specifically (a
+  recent-purchase-event feed, not a size leaderboard — as opposed to only
+  appearing in `token-boosts/top/v1`), that itself is a real recency
+  signal, so it's treated as a genuine crossing and alerted even on first
+  sight. This matters for very new tokens that get boosted straight past
+  the threshold before any earlier check had a chance to record a baseline.
 - A token that goes from, say, 20 to 75 between checks **is** alerted —
   that's a genuine new crossing.
 - A token that stays above the threshold across checks never re-alerts.

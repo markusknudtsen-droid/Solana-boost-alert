@@ -13,6 +13,7 @@ jobs:
       # Hoisted so the steps below can branch on whether it is configured;
       # the secrets context is not available in a step-level `if`.
       NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+      GH_DISPATCH_TOKEN: ${{ secrets.GH_DISPATCH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -48,3 +49,18 @@ jobs:
             NTFY_TOKEN
         env:
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+
+      # Upload/refresh the GitHub dispatch token as an encrypted Cloudflare
+      # secret. The Worker's Cron Trigger uses this to call GitHub's
+      # workflow_dispatch API every 5 minutes, working around GitHub's own
+      # unreliable schedule event (observed 2-12 hour real gaps).
+      - name: Upload GitHub dispatch token
+        if: env.GH_DISPATCH_TOKEN != ''
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN_SCOPE }}
+          wranglerVersion: "4"
+          secrets: |
+            GH_DISPATCH_TOKEN
+        env:
+          GH_DISPATCH_TOKEN: ${{ secrets.GH_DISPATCH_TOKEN }}

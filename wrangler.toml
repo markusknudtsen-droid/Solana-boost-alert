@@ -4,6 +4,19 @@ compatibility_date = "2025-01-01"
 
 [vars]
 NTFY_TOPIC = "sol-boost-bea2d303a1f27eaa"
+GH_OWNER = "markusknudtsen-droid"
+GH_REPO = "Solana-boost-alert"
+GH_WORKFLOW = "check-boosts.yml"
+
+# GitHub's own */5 schedule event is unreliable in practice (observed real
+# gaps of 2-12 hours instead of 5 minutes -- GitHub deprioritizes
+# high-frequency cron on lower-traffic repos). Cloudflare Cron Triggers run
+# reliably to the minute, so this Worker's job on this schedule isn't to
+# check boosts itself (DexScreener blocks the Workers egress IP range) --
+# it just pings GitHub's API to kick off check-boosts.yml via
+# workflow_dispatch, which then runs on GitHub's own unblocked runner IPs.
+[triggers]
+crons = ["*/5 * * * *"]
 
 [observability]
 enabled = true
