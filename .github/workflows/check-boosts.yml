@@ -22,7 +22,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN_SCOPE }}
           CLOUDFLARE_ACCOUNT_ID: '0bb10278a833daebab009ebb7aad9015'
           CLOUDFLARE_KV_NAMESPACE_ID: '5a85da53bbd241ca839a48b078a42cc1'
-          NTFY_TOPIC: 'sol-boost-bea2d303a1f27eaa'
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
           BOOST_THRESHOLD: '50'
         run: node scripts/check-boosts.mjs

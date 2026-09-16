@@ -2,8 +2,10 @@ name = "solana-boost-alerts"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
 
+# NTFY_TOPIC, NTFY_TOKEN, and GH_DISPATCH_TOKEN are Cloudflare secrets
+# (uploaded by deploy.yml), not vars here -- this repo is public, and a var
+# in wrangler.toml is committed in plaintext.
 [vars]
-NTFY_TOPIC = "sol-boost-bea2d303a1f27eaa"
 GH_OWNER = "markusknudtsen-droid"
 GH_REPO = "Solana-boost-alert"
 GH_WORKFLOW = "check-boosts.yml"

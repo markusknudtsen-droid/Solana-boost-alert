@@ -36,14 +36,38 @@ notification's "Copy CA" button to copy it straight to your clipboard).
 Every push to `main` still auto-deploys the Worker via
 `.github/workflows/deploy.yml`.
 
+**This repo is public.** It was private originally, but a 5-minute check
+cadence burns through GitHub's free 2,000 Actions-minutes/month quota for
+private repos in about a week (each run costs a minimum of 1 billed minute
+regardless of how short it actually runs) — every run then starts failing
+instantly with no logs, which is exactly what happened between Sep 7 and
+Sep 16. Public repos get unlimited free Actions minutes, so the repo was
+made public to keep the 5-minute cadence without paying for extra minutes.
+Nothing in the code or committed config is a credential — every actual
+secret (`NTFY_TOPIC` included, see below) lives only in GitHub/Cloudflare
+secrets, never in a tracked file.
+
 ## One-time setup
 
 ### 1. Get the alert on your phone
 
 1. Install the **ntfy** app: [iOS](https://apps.apple.com/us/app/ntfy/id1625396347) / [Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy)
-2. Subscribe to topic `sol-boost-bea2d303a1f27eaa` (already installed/subscribed if you're reading this after setup).
+2. Pick a random, hard-to-guess topic name (e.g. `sol-boost-<32 random hex
+   chars>`) and subscribe to it in the app on every device you want alerts
+   on.
+3. GitHub repo → **Settings → Environments → Scope → Add secret**, named
+   `NTFY_TOPIC`, value = that topic name.
 
-   This topic is a random private channel — don't share it publicly.
+   **This is deliberately not committed anywhere** — this repo is public,
+   and ntfy.sh has no access control on a topic beyond knowing its name:
+   whoever knows the topic can read your alerts or publish fake ones to
+   your phone. GitHub secrets can't be read back once saved, so keep your
+   own copy (password manager, notes) if you'll need it again. It's
+   uploaded to the Worker as a Cloudflare secret by `deploy.yml` and read
+   directly from the GitHub secret by `check-boosts.yml`, same pattern as
+   `NTFY_TOKEN` and `GH_DISPATCH_TOKEN` below. If you ever suspect the
+   topic has leaked, just pick a new one and repeat this step — nothing
+   else needs to change.
 
 ### 2. Cloudflare API token (used by both workflows)
 
@@ -110,7 +134,9 @@ solely on GitHub's own (unreliable) `schedule:` trigger.
 ## Config
 
 Edit the `env:` block in `.github/workflows/check-boosts.yml` to change
-`BOOST_THRESHOLD` (default `50`) or `NTFY_TOPIC`.
+`BOOST_THRESHOLD` (default `50`). To change which ntfy topic gets the
+alerts, update the `NTFY_TOPIC` secret (step 1 above) — don't put a topic
+name directly in this file, it's committed and this repo is public.
 
 ## How it decides what's a "new" boost
 
